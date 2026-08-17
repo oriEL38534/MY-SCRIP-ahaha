@@ -1,0 +1,106 @@
+-- Script (Server) — הנח בתוך ה-Tool (Script, לא LocalScript)
+local tool = script.Parent
+local BOW_NAME = "Bow" -- שנה אם ה-Tool שלך נקרא אחרת
+local DEFAULT_WALK_SPEED = 20 -- ברירת מחדל אם לא הוגדר אחרת
+local MIN_SPEED = 16
+local MAX_SPEED = 200
+local EVENT_NAME = "WalkSpeedChangeEvent"
+
+-- צור את ה-RemoteEvent אם אין
+local event = tool:FindFirstChild(EVENT_NAME)
+if not event then
+	event = Instance.new("RemoteEvent")
+	event.Name = EVENT_NAME
+	event.Parent = tool
+end
+
+local function clampSpeed(v)
+	v = tonumber(v) or DEFAULT_WALK_SPEED
+	-- עיגול למטה לאמספר שלם
+	v = math.floor(v)
+	if v < MIN_SPEED then v = MIN_SPEED end
+	if v > MAX_SPEED then v = MAX_SPEED end
+	return v
+end
+
+local function setHumanoidWalkSpeed(humanoid, speed)
+	if humanoid then
+		pcall(function()
+			humanoid.WalkSpeed = speed
+		end)
+	end
+end
+
+-- כשמגיע בקשה מהלקוח לשנות מהירות
+event.OnServerEvent:Connect(function(player, requestedSpeed)
+	-- בדוק שמבקשים את השינוי עבור אותו כלי ושכרגע הוא נמצא ביד השחקן
+	if not player or not player.Character then return end
+	-- בדוק שהכלי במיקום של הדמות של השחקן (כלומר שמזווג)
+	if tool.Parent ~= player.Character then
+		-- אסור לשנות אם השחקן לא מחזיק את הכלי כרגע
+		return
+	end
+
+	local speed = clampSpeed(requestedSpeed)
+
+	-- שמור את המהירות כתכונה על הכלי (מוסבר ומשודר)
+	tool:SetAttribute("WalkSpeed", speed)
+
+	-- החל על ההומנואיד הנוכחי של השחקן
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		-- שמור מהירות מקורית אם צריך
+		if humanoid:GetAttribute("OriginalWalkSpeed") == nil then
+			humanoid:SetAttribute("OriginalWalkSpeed", humanoid.WalkSpeed)
+		end
+		setHumanoidWalkSpeed(humanoid, speed)
+	end
+end)
+
+-- כאשר מציידים את הכלי — החל את המהירות המוגדרת (Attribute או ברירת מחדל)
+tool.Equipped:Connect(function()
+	if tool.Name ~= BOW_NAME then return end
+	-- קבל מהירות מתוך Attribute אם קיימת
+	local speed = tool:GetAttribute("WalkSpeed") or DEFAULT_WALK_SPEED
+	speed = clampSpeed(speed)
+
+	-- החל על ההומנואיד של הבעלים (tool.Parent הוא Character בזמן מצוד)
+	local character = tool.Parent
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		if humanoid:GetAttribute("OriginalWalkSpeed") == nil then
+			humanoid:SetAttribute("OriginalWalkSpeed", humanoid.WalkSpeed)
+		end
+		setHumanoidWalkSpeed(humanoid, speed)
+	end
+end)
+
+-- שחזור מהירות כשמוציאים מהיד
+tool.Unequipped:Connect(function()
+	if tool.Name ~= BOW_NAME then return end
+	-- נסה לשחזר מהירות מהאומנואיד של השחקן
+	local character = tool.Parent
+	local humanoid = nil
+	if character and character:IsA("Model") then
+		humanoid = character:FindFirstChildOfClass("Humanoid")
+	end
+	-- במקרה שה-Parent השתנה, נסה למצוא לפי שחקנים
+	if not humanoid then
+		for _,player in ipairs(game.Players:GetPlayers()) do
+			if player.Character and player.Character:FindFirstChild(tool.Name) == nil then
+				-- לא נשתמש כאן; פשוט ננסה לשחזר אם נמצא הומנואיד מתאים
+			end
+		end
+	end
+
+	if humanoid then
+		local orig = humanoid:GetAttribute("OriginalWalkSpeed")
+		if orig then
+			setHumanoidWalkSpeed(humanoid, orig)
+			humanoid:SetAttribute("OriginalWalkSpeed", nil)
+		else
+			-- אם אין ערך שמור, נאתחל לבי־דיפולט מינימלי
+			setHumanoidWalkSpeed(humanoid, MIN_SPEED)
+		end
+	end
+end)
