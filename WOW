@@ -1,48 +1,37 @@
--- LocalScript (Client) — לשים בתוך ה-Tool
--- תפריט עם סליידר (16-200), כפתור Apply, כפתור Close, ופתח מהיר (כפתור קטן / מקש M)
-local tool = script.Parent
-local BOW_NAME = "Bow" -- שנה אם צריך
-local MIN_SPEED = 16
-local MAX_SPEED = 200
-local EVENT_NAME = "WalkSpeedChangeEvent"
+-- ToolUtils (תיקון לגרסה עם darken/restore נכונים)
+local ToolUtils = {}
 
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+function ToolUtils.darkenParts(root, store)
+	if not root then return end
+	store = store or {}
+	-- נמנע דליפת זיכרון על ידי שימוש בטבלת מפתחות חלשה
+	setmetatable(store, { __mode = "k" })
 
--- ויזואל: חשיכה
-local DARK_COLOR = Color3.fromRGB(5,5,5)
-local DARK_MATERIAL = Enum.Material.SmoothPlastic
-local originalProps = {}
-
-local function storeIfMissing(inst, props)
-	if originalProps[inst] then return end
-	originalProps[inst] = props
-end
-
-local function darkenParts(root)
 	for _, desc in ipairs(root:GetDescendants()) do
 		if desc:IsA("BasePart") or desc:IsA("MeshPart") then
-			local props = {Color = desc.Color, Material = desc.Material, Transparency = desc.Transparency}
-			if desc:IsA("MeshPart") then props.TextureID = desc.TextureID end
-			storeIfMissing(desc, props)
-			desc.Color = DARK_COLOR
-			desc.Material = DARK_MATERIAL
-		end
-		if desc:IsA("Decal") or desc:IsA("Texture") then
-			storeIfMissing(desc, {Transparency = desc.Transparency})
-			desc.Transparency = 1
-		end
-		if desc:IsA("SpecialMesh") then
-			storeIfMissing(desc, {TextureId = desc.TextureId})
+			store[desc] = store[desc] or { Color = desc.Color, Material = desc.Material, Transparency = desc.Transparency }
+			if desc:IsA("MeshPart") then
+				store[desc].TextureID = desc.TextureID
+			end
+			pcall(function()
+				desc.Color = Color3.fromRGB(5, 5, 5)
+				desc.Material = Enum.Material.SmoothPlastic
+			end)
+		elseif desc:IsA("Decal") or desc:IsA("Texture") then
+			store[desc] = store[desc] or { Transparency = desc.Transparency }
+			pcall(function() desc.Transparency = 1 end)
+		elseif desc:IsA("SpecialMesh") then
+			store[desc] = store[desc] or { TextureId = desc.TextureId }
 			pcall(function() desc.TextureId = "" end)
 		end
 	end
+
+	return store
 end
 
-local function restoreParts()
-	for inst, props in pairs(originalProps) do
+function ToolUtils.restoreParts(store)
+	if not store then return end
+	for inst, props in pairs(store) do
 		if inst and inst.Parent then
 			pcall(function()
 				if props.Color then inst.Color = props.Color end
@@ -53,307 +42,6 @@ local function restoreParts()
 			end)
 		end
 	end
-	originalProps = {}
 end
 
--- RemoteEvent reference (נמצא על ה-Tool לפי הסקריפט של השרת)
-local function getEvent()
-	local evt = tool:FindFirstChild(EVENT_NAME)
-	if evt and evt:IsA("RemoteEvent") then return evt end
-	return nil
-end
-
--- GUI משתנה
-local screenGui, menuFrame, openButton
-local sliderBar, sliderKnob, valueLabel, applyButton, closeButton, minusBtn, plusBtn, inputBox
-
-local dragging = false
-local dragConnection
-
-local function clamp(v)
-	v = tonumber(v) or MIN_SPEED
-	v = math.floor(v)
-	if v < MIN_SPEED then v = MIN_SPEED end
-	if v > MAX_SPEED then v = MAX_SPEED end
-	return v
-end
-
-local function speedToPosition(speed)
-	local ratio = (speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED)
-	ratio = math.clamp(ratio,0,1)
-	return ratio
-end
-
-local function positionToSpeed(ratio)
-	ratio = math.clamp(ratio,0,1)
-	local speed = MIN_SPEED + ratio * (MAX_SPEED - MIN_SPEED)
-	return math.floor(speed + 0.5)
-end
-
-local function createGui()
-	if screenGui then return end
-	screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "BowMenuGui"
-	screenGui.ResetOnSpawn = false
-	screenGui.Parent = playerGui
-
-	-- Open small button (על המסך) שיופיע רק כשהמחזיק הוא אתה
-	openButton = Instance.new("TextButton")
-	openButton.Name = "BowOpenBtn"
-	openButton.Size = UDim2.new(0, 80, 0, 30)
-	openButton.Position = UDim2.new(0.5, -40, 0.92, -15)
-	openButton.AnchorPoint = Vector2.new(0.5,0.5)
-	openButton.BackgroundColor3 = Color3.fromRGB(50,50,50)
-	openButton.TextColor3 = Color3.new(1,1,1)
-	openButton.Text = "Bow Menu"
-	openButton.Parent = screenGui
-	openButton.Visible = false
-
-	-- Main menu frame
-	menuFrame = Instance.new("Frame")
-	menuFrame.Size = UDim2.new(0, 300, 0, 180)
-	menuFrame.Position = UDim2.new(0.5, -150, 0.5, -90)
-	menuFrame.AnchorPoint = Vector2.new(0.5,0.5)
-	menuFrame.BackgroundColor3 = Color3.fromRGB(30,30,30)
-	menuFrame.BorderSizePixel = 0
-	menuFrame.Visible = false
-	menuFrame.Parent = screenGui
-
-	local title = Instance.new("TextLabel", menuFrame)
-	title.Size = UDim2.new(1, -20, 0, 28)
-	title.Position = UDim2.new(0,10,0,8)
-	title.BackgroundTransparency = 1
-	title.Text = "תפריט Bow"
-	title.TextColor3 = Color3.new(1,1,1)
-	title.Font = Enum.Font.SourceSansBold
-	title.TextSize = 20
-
-	-- Value label
-	valueLabel = Instance.new("TextLabel", menuFrame)
-	valueLabel.Size = UDim2.new(1, -20, 0, 22)
-	valueLabel.Position = UDim2.new(0,10,0,38)
-	valueLabel.BackgroundTransparency = 1
-	valueLabel.TextColor3 = Color3.fromRGB(200,200,200)
-	valueLabel.Text = "מהירות: 20"
-	valueLabel.Font = Enum.Font.SourceSans
-	valueLabel.TextSize = 18
-
-	-- Slider bar background
-	sliderBar = Instance.new("Frame", menuFrame)
-	sliderBar.Size = UDim2.new(1, -40, 0, 28)
-	sliderBar.Position = UDim2.new(0,20,0,70)
-	sliderBar.BackgroundColor3 = Color3.fromRGB(60,60,60)
-	sliderBar.BorderSizePixel = 0
-	sliderBar.AnchorPoint = Vector2.new(0,0)
-
-	-- Fill for visual
-	local sliderFill = Instance.new("Frame", sliderBar)
-	sliderFill.Name = "Fill"
-	sliderFill.Size = UDim2.new(0,0,1,0)
-	sliderFill.BackgroundColor3 = Color3.fromRGB(100,180,100)
-	sliderFill.BorderSizePixel = 0
-	sliderFill.Position = UDim2.new(0,0,0,0)
-
-	-- Knob
-	sliderKnob = Instance.new("ImageButton", sliderBar)
-	sliderKnob.Name = "Knob"
-	sliderKnob.Size = UDim2.new(0, 18, 1, -4)
-	sliderKnob.Position = UDim2.new(0, -9, 0, 2)
-	sliderKnob.AnchorPoint = Vector2.new(0.5,0)
-	sliderKnob.BackgroundColor3 = Color3.fromRGB(220,220,220)
-	sliderKnob.BorderSizePixel = 0
-	sliderKnob.Image = ""
-	sliderKnob.AutoButtonColor = false
-
-	-- minus / plus buttons
-	minusBtn = Instance.new("TextButton", menuFrame)
-	minusBtn.Size = UDim2.new(0, 36, 0, 28)
-	minusBtn.Position = UDim2.new(0, 20, 0, 104)
-	minusBtn.Text = "-"
-	minusBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
-	minusBtn.TextColor3 = Color3.new(1,1,1)
-
-	plusBtn = Instance.new("TextButton", menuFrame)
-	plusBtn.Size = UDim2.new(0, 36, 0, 28)
-	plusBtn.Position = UDim2.new(1, -56, 0, 104)
-	plusBtn.AnchorPoint = Vector2.new(0,0)
-	plusBtn.Text = "+"
-	plusBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
-	plusBtn.TextColor3 = Color3.new(1,1,1)
-
-	-- inputBox for direct number
-	inputBox = Instance.new("TextBox", menuFrame)
-	inputBox.Size = UDim2.new(0, 160, 0, 28)
-	inputBox.Position = UDim2.new(0.5, -80, 0, 104)
-	inputBox.AnchorPoint = Vector2.new(0.5,0)
-	inputBox.Text = ""
-	inputBox.PlaceholderText = tostring(MIN_SPEED .. "-" .. MAX_SPEED)
-	inputBox.BackgroundColor3 = Color3.fromRGB(50,50,50)
-	inputBox.TextColor3 = Color3.new(1,1,1)
-	inputBox.ClearTextOnFocus = false
-
-	-- Apply / Close
-	applyButton = Instance.new("TextButton", menuFrame)
-	applyButton.Size = UDim2.new(0, 120, 0, 32)
-	applyButton.Position = UDim2.new(0.5, -130, 1, -40)
-	applyButton.AnchorPoint = Vector2.new(0,1)
-	applyButton.Text = "החל"
-	applyButton.BackgroundColor3 = Color3.fromRGB(80,140,80)
-	applyButton.TextColor3 = Color3.new(1,1,1)
-
-	closeButton = Instance.new("TextButton", menuFrame)
-	closeButton.Size = UDim2.new(0, 120, 0, 32)
-	closeButton.Position = UDim2.new(0.5, 10, 1, -40)
-	closeButton.AnchorPoint = Vector2.new(0,1)
-	closeButton.Text = "סגור"
-	closeButton.BackgroundColor3 = Color3.fromRGB(140,80,80)
-	closeButton.TextColor3 = Color3.new(1,1,1)
-
-	-- מאפייני עזר
-	local function setSliderBySpeed(speed)
-		local ratio = speedToPosition(speed)
-		local totalWidth = sliderBar.AbsoluteSize.X
-		local knobX = ratio * totalWidth
-		-- עדכון מיקום knob ו-fill
-		sliderKnob.Position = UDim2.new(ratio, 0, 0, 2)
-		sliderBar:FindFirstChild("Fill").Size = UDim2.new(ratio, 0, 1, 0)
-		valueLabel.Text = "מהירות: " .. tostring(speed)
-		inputBox.Text = tostring(speed)
-	end
-
-	-- הפעל הקשרים
-	local function onOpenClicked()
-		menuFrame.Visible = true
-	end
-	openButton.MouseButton1Click:Connect(onOpenClicked)
-
-	closeButton.MouseButton1Click:Connect(function()
-		menuFrame.Visible = false
-	end)
-
-	applyButton.MouseButton1Click:Connect(function()
-		local val = clamp(tonumber(inputBox.Text) or positionToSpeed(sliderKnob.Position.X.Scale))
-		-- שלח בקשה לשרת
-		local evt = getEvent()
-		if evt then
-			evt:FireServer(val)
-		end
-		-- עדכון מקומי של התצוגה
-		setSliderBySpeed(val)
-	end)
-
-	minusBtn.MouseButton1Click:Connect(function()
-		local cur = clamp(tonumber(inputBox.Text) or positionToSpeed(sliderKnob.Position.X.Scale))
-		cur = clamp(cur - 1)
-		setSliderBySpeed(cur)
-	end)
-
-	plusBtn.MouseButton1Click:Connect(function()
-		local cur = clamp(tonumber(inputBox.Text) or positionToSpeed(sliderKnob.Position.X.Scale))
-		cur = clamp(cur + 1)
-		setSliderBySpeed(cur)
-	end)
-
-	-- סליידר: טיפול בגרירה
-	local function updateFromPixel(x)
-		local absPos = sliderBar.AbsolutePosition.X
-		local width = sliderBar.AbsoluteSize.X
-		local relative = (x - absPos) / width
-		local speed = positionToSpeed(relative)
-		setSliderBySpeed(speed)
-	end
-
-	sliderKnob.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			UserInputService.InputChanged:Connect(function(inp)
-				if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
-					updateFromPixel(inp.Position.X)
-				elseif dragging and inp.UserInputType == Enum.UserInputType.Touch then
-					updateFromPixel(inp.Position.X)
-				end
-			end)
-		end
-	end)
-
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
-	end)
-
-	-- גם קליק על ה-bar מעדכן
-	sliderBar.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			updateFromPixel(input.Position.X)
-		end
-	end)
-
-	-- הקלקה על ה-knob תופסת גרירה דרך MouseMovement handled למעלה
-
-	-- עדכון התחלי לערך הנוכחי מה־Attribute
-	local initial = clamp(tool:GetAttribute("WalkSpeed") or 20)
-	setSliderBySpeed(initial)
-end
-
-local function destroyGui()
-	if screenGui then
-		screenGui:Destroy()
-		screenGui = nil
-	end
-end
-
--- הצגה של OpenButton רק כשהשחקן המחזיק הוא אתה
-tool.Equipped:Connect(function()
-	if tool.Name ~= BOW_NAME then return end
-	if not player.Character then return end
-	if tool.Parent ~= player.Character then return end
-
-	-- חשוך את הכלי
-	darkenParts(tool)
-
-	-- צור GUI והצג הכפתור הקטן + פתח אוטומטי אם רוצים
-	createGui()
-	if openButton then openButton.Visible = true end
-end)
-
-tool.Unequipped:Connect(function()
-	if tool.Name ~= BOW_NAME then return end
-	restoreParts()
-	if openButton then openButton.Visible = false end
-	if menuFrame then menuFrame.Visible = false end
-end)
-
--- מקש M לפתיחה/סגירה של התפריט (רק כשלוחש ה‑Bow הוא המחזיק)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.KeyCode == Enum.KeyCode.M then
-		-- רק אם מצויד
-		if tool.Parent and tool.Parent:IsDescendantOf(player.Character) then
-			-- בטל/הצג
-			if menuFrame and menuFrame.Visible then
-				menuFrame.Visible = false
-			else
-				if not screenGui then createGui() end
-				if menuFrame then menuFrame.Visible = true end
-			end
-		end
-	end
-end)
-
--- עדכון GUI כש‑Attribute משתנה (שרת עדכן את ה־Attribute)
-tool:GetAttributeChangedSignal("WalkSpeed"):Connect(function()
-	if screenGui and menuFrame and menuFrame.Visible then
-		-- עדכון סליידר/טקסט אם פתוח
-		local v = clamp(tool:GetAttribute("WalkSpeed") or 20)
-		-- מחפש פונקציה setSliderBySpeed - היא מוגדרת בתוך createGui; נשתמש בדרך פחות אלגנטית:
-		-- פשוט עדכון השדות הישירות אם קיימים
-		if valueLabel then valueLabel.Text = "מהירות: " .. tostring(v) end
-		if inputBox then inputBox.Text = tostring(v) end
-		if sliderBar and sliderBar:FindFirstChild("Fill") and sliderKnob then
-			local ratio = speedToPosition(v)
-			sliderBar:FindFirstChild("Fill").Size = UDim2.new(ratio,0,1,0)
-			sliderKnob.Position = UDim2.new(ratio, 0, 0, 2)
-		end
-	end
-end)
+return ToolUtils
