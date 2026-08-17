@@ -1,47 +1,78 @@
--- ToolUtils (תיקון לגרסה עם darken/restore נכונים)
+-- ModuleScript (ReplicatedStorage) - ToolUtils
 local ToolUtils = {}
 
-function ToolUtils.darkenParts(root, store)
-	if not root then return end
-	store = store or {}
-	-- נמנע דליפת זיכרון על ידי שימוש בטבלת מפתחות חלשה
-	setmetatable(store, { __mode = "k" })
-
-	for _, desc in ipairs(root:GetDescendants()) do
-		if desc:IsA("BasePart") or desc:IsA("MeshPart") then
-			store[desc] = store[desc] or { Color = desc.Color, Material = desc.Material, Transparency = desc.Transparency }
-			if desc:IsA("MeshPart") then
-				store[desc].TextureID = desc.TextureID
-			end
-			pcall(function()
-				desc.Color = Color3.fromRGB(5, 5, 5)
-				desc.Material = Enum.Material.SmoothPlastic
-			end)
-		elseif desc:IsA("Decal") or desc:IsA("Texture") then
-			store[desc] = store[desc] or { Transparency = desc.Transparency }
-			pcall(function() desc.Transparency = 1 end)
-		elseif desc:IsA("SpecialMesh") then
-			store[desc] = store[desc] or { TextureId = desc.TextureId }
-			pcall(function() desc.TextureId = "" end)
-		end
-	end
-
-	return store
+-- השווה למקום נקודתי (PlaceId)
+function ToolUtils.isRightPlace(placeId)
+    if not placeId then return true end -- אם לא הוגדר, לא מחנקים
+    return game.PlaceId == placeId
 end
 
+-- יצירת/קבלת RemoteEvent בתוך ה-Tool
+function ToolUtils.getOrCreateRemoteEvent(tool, name)
+    if not tool then return nil end
+    local evt = tool:FindFirstChild(name)
+    if evt and evt:IsA("RemoteEvent") then return evt end
+    evt = Instance.new("RemoteEvent")
+    evt.Name = name
+    evt.Parent = tool
+    return evt
+end
+
+-- אילוץ טווח מהירויות
+function ToolUtils.clampSpeed(v, min, max, default)
+    min = min or 16
+    max = max or 200
+    default = default or 20
+    v = tonumber(v) or default
+    v = math.floor(v)
+    if v < min then v = min end
+    if v > max then v = max end
+    return v
+end
+
+-- שינוי מהירות על הומנואיד
+function ToolUtils.setHumanoidWalkSpeed(humanoid, speed)
+    if not humanoid then return end
+    pcall(function() humanoid.WalkSpeed = speed end)
+end
+
+-- חשיכת חלקים ושמירת המאפיינים המקוריים (מבצע ב-client)
+function ToolUtils.darkenParts(root, store)
+    if not root then return end
+    store = store or {}
+    for _, desc in ipairs(root:GetDescendants()) do
+        if desc:IsA("BasePart") or desc:IsA("MeshPart") then
+            store[desc] = store[desc] or {Color = desc.Color, Material = desc.Material, Transparency = desc.Transparency}
+            if desc:IsA("MeshPart") then store[desc].TextureID = desc.TextureID end
+            pcall(function()
+                desc.Color = Color3.fromRGB(5,5,5)
+                desc.Material = Enum.Material.SmoothPlastic
+            end)
+        elseif desc:IsA("Decal") or desc:IsA("Texture") then
+            store[desc] = store[desc] or {Transparency = desc.Transparency}
+            pcall(function() desc.Transparency = 1 end)
+        elseif desc:IsA("SpecialMesh") then
+            store[desc] = store[desc] or {TextureId = desc.TextureId}
+            pcall(function() desc.TextureId = "" end)
+        end
+    end
+    return store
+end
+
+-- שחזור לפי טבלת השמירה
 function ToolUtils.restoreParts(store)
-	if not store then return end
-	for inst, props in pairs(store) do
-		if inst and inst.Parent then
-			pcall(function()
-				if props.Color then inst.Color = props.Color end
-				if props.Material then inst.Material = props.Material end
-				if props.Transparency then inst.Transparency = props.Transparency end
-				if props.TextureID and inst:IsA("MeshPart") then inst.TextureID = props.TextureID end
-				if props.TextureId and inst:IsA("SpecialMesh") then inst.TextureId = props.TextureId end
-			end)
-		end
-	end
+    if not store then return end
+    for inst, props in pairs(store) do
+        if inst and inst.Parent then
+            pcall(function()
+                if props.Color then inst.Color = props.Color end
+                if props.Material then inst.Material = props.Material end
+                if props.Transparency then inst.Transparency = props.Transparency end
+                if props.TextureID and inst:IsA("MeshPart") then inst.TextureID = props.TextureID end
+                if props.TextureId and inst:IsA("SpecialMesh") then inst.TextureId = props.TextureId end
+            end)
+        end
+    end
 end
 
 return ToolUtils
